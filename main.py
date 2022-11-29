@@ -116,13 +116,12 @@ def draw_map(geolocations: dict):
     title_text = 'Request Geolocations',
     showlegend = False,
     geo = dict(
-        projection_type = 'azimuthal equal area',
         showland = True,
         landcolor = 'rgb(243, 243, 243)',
         countrycolor = 'rgb(204, 204, 204)',
     ),
   )
-  fig.update_geos(projection_type="natural earth", showcountries=True, countrycolor="Black")
+  fig.update_geos(projection_type="orthographic", showcountries=True, countrycolor="Black")
 
 
   pio.write_html(fig, './images/test.html')
