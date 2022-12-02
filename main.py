@@ -1,5 +1,6 @@
 import argparse
 import plotly.graph_objects as go
+from functools import lru_cache
 import plotly.io as pio
 from time import sleep
 import requests
@@ -37,13 +38,17 @@ def do_dns_query(hostnames: set):
   res = defaultdict(lambda: [])
 
   for host in hostnames:
-    for rdata in dns.resolver.query(host, 'A'):
-      res[host].append(rdata.address)
+    try:
+      for rdata in dns.resolver.query(host, 'A'):
+        res[host].append(rdata.address)
+    except Exception:
+      print("error: got exception when making DNS request")
 
   return res
 
 
 # TODO need some sort of cache on disk since we get rate limited by the API 45 req/min
+@lru_cache(maxsize = None)
 def get_geolocation(ip: str):
   url = f"https://ip-db.io/api/{ip}"
   response = requests.get(url)
@@ -124,7 +129,7 @@ def draw_map(geolocations: dict):
   fig.update_geos(projection_type="orthographic", showcountries=True, countrycolor="Black")
 
 
-  pio.write_html(fig, './images/test.html')
+  pio.write_html(fig, './images/test2.html')
   # pio.write_image(fig, './images/test.png', format='png', scale=6, width=1080, height=1080)
 
   pass
@@ -134,9 +139,9 @@ def main():
   harfile = parse_har_file(args.filename)
   hostnames = get_hosts_from_harfile(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
-  # geolocations = map_ips_to_geolocation(hosts_with_addrs)
+  geolocations = map_ips_to_geolocation(hosts_with_addrs)
 
-  draw_map(get_test_data())
+  draw_map(geolocations)
 
   exit(0)
 
