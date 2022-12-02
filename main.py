@@ -47,7 +47,6 @@ def do_dns_query(hostnames: set):
   return res
 
 
-# TODO need some sort of cache on disk since we get rate limited by the API 45 req/min
 @lru_cache(maxsize = None)
 def get_geolocation(ip: str):
   url = f"https://ip-db.io/api/{ip}"
