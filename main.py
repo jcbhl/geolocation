@@ -30,9 +30,45 @@ def get_hosts_from_harfile(harfile) -> set:
       if header['name'] == "Host":
         hosts.add(header['value'])
         break
+   
+      
+    
+
+
 
   return hosts
 
+def date_parser(date) -> int:
+  date = date.split(' ')[-2]
+  date = date.split(':')
+  minutes = int(date[0])*60.0 + int(date[1]) + int(date[2])/60.0
+  return minutes
+ 
+def get_hosts_and_access_times(harfile) -> dict:
+  access_times = {}
+
+  domain = ""
+  time = ""
+  for entry in harfile['log']['entries']:
+    for header in entry['request']['headers']:
+      if header['name'] == "Host":
+        domain = header['value']
+        break
+    for header in entry['response']['headers']:
+      if header['name'] == "date":
+        time = header['value']
+        time = date_parser(time)
+        break
+    access_times[domain] = time
+  
+  # order the domains by their access times
+  access_times = dict(sorted(access_times.items(), key=lambda x: x[1]))
+  min_time = min(access_times.values()) 
+  max_time = max(access_times.values()) 
+  for domain in access_times:
+    access_times[domain] = (access_times[domain] - min_time) / (max_time - min_time)
+
+  return access_times
 # For each domain name in the set, run a DNS query to get the IP.
 def do_dns_query(hostnames: set):
   res = defaultdict(lambda: [])
@@ -78,7 +114,9 @@ def map_ips_to_geolocation(hosts):
   print(res)
   return res
 
-def draw_map(geolocations: dict):
+def draw_map(geolocations: dict, access_times: dict):
+  access_order = order_access_times(access_times)
+
   my_lat, my_long = get_geolocation(get_my_ip())
 
   fig = go.Figure()
@@ -92,10 +130,11 @@ def draw_map(geolocations: dict):
           lon = [my_long, long],
           lat = [my_lat, lat],
           mode = 'lines',
-          line = dict(width = 1,color = 'red'),
+          line = dict(width = 1,color=f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})'),
           opacity = 1,
         )
       )
+
       
       # Endpoint
       fig.add_trace(go.Scattergeo(
@@ -103,14 +142,14 @@ def draw_map(geolocations: dict):
         lon = [long],
         lat = [lat],
         hoverinfo = 'text',
-        text = f"Domain {domain}",
+        text = f"Domain {access_order[domain]} {domain}",
         mode = 'markers',
         marker = dict(
             size = 10,
-            color = 'rgb(255, 0, 0)',
+            color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})',
             line = dict(
                 width = 3,
-                color = 'rgba(68, 68, 68, 0)'
+                color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001)* 1.5})'
             )
         )
       ))
@@ -133,14 +172,31 @@ def draw_map(geolocations: dict):
 
   pass
 
+#Order access_times
+def order_access_times(access_times):
+  i = 1
+  z = 0 #normalize vaues from zero to ones by the access times
+  ord_access_times = {}
+  for domain in access_times:
+    if access_times[domain] == z:
+      ord_access_times[domain] = i # if it has the same acceess value, z will remain the same
+    else:
+      z = access_times[domain]
+      ord_access_times[domain] = i
+      i += 1
+  return ord_access_times
+
 def main():
   args = handle_cli_args()
   harfile = parse_har_file(args.filename)
   hostnames = get_hosts_from_harfile(harfile)
+  access_times = get_hosts_and_access_times(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
-  geolocations = map_ips_to_geolocation(hosts_with_addrs)
+  #geolocations = map_ips_to_geolocation(hosts_with_addrs)
 
-  draw_map(geolocations)
+
+
+  draw_map(get_test_data(), access_times)
 
   exit(0)
 
