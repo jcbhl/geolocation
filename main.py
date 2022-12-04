@@ -1,7 +1,6 @@
 import argparse
 import plotly.graph_objects as go
 from functools import lru_cache
-from datetime import datetime
 import plotly.io as pio
 from time import sleep
 import requests
@@ -24,55 +23,60 @@ def parse_har_file(filename: str):
   
   return parsed
 
-def get_domain_from_entry(entry) -> str:
-  for header in entry['request']['headers']:
-    if header['name'] == "Host":
-      return header['value']
-
 def get_hosts_from_harfile(harfile) -> set:
   hosts = set()
   for entry in harfile['log']['entries']:
-    domain_name = get_domain_from_entry(entry)
-    hosts.add(domain_name)
+    for header in entry['request']['headers']:
+      if header['name'] == "Host":
+        hosts.add(header['value'])
+        break
+   
+      
+    
+
+
 
   return hosts
 
-def get_times_from_harfile(harfile) -> "dict[str, datetime]":
-  request_times = {}
-  for entry in harfile['log']['entries']:
-    domain_name = get_domain_from_entry(entry)
-    request_time = entry['startedDateTime']
-    parsed_request_time = datetime.strptime(request_time, "%Y-%m-%dT%H:%M:%S.%f%z")
-
-    request_times[domain_name] = parsed_request_time
-  
-  return request_times
-
-def get_sizes_from_harfile(harfile) -> "dict[str, int]":
-  response_sizes = defaultdict(int)
-  for entry in harfile['log']['entries']:
-    domain_name = get_domain_from_entry(entry)
-    response_size = 0
-    try:
-      response_size = int(entry['response']['content']['size'])
-    except KeyError:
-      pass
-
-    response_sizes[domain_name] += response_size
-  
-  return response_sizes
-
+def date_parser(date) -> int:
+  date = date.split(' ')[-2]
+  date = date.split(':')
+  minutes = int(date[0])*60.0 + int(date[1]) + int(date[2])/60.0
+  return minutes
  
+def get_hosts_and_access_times(harfile) -> dict:
+  access_times = {}
+
+  domain = ""
+  time = ""
+  for entry in harfile['log']['entries']:
+    for header in entry['request']['headers']:
+      if header['name'] == "Host":
+        domain = header['value']
+        break
+    for header in entry['response']['headers']:
+      if header['name'] == "date":
+        time = header['value']
+        time = date_parser(time)
+        break
+    access_times[domain] = time
+  
+  # order the domains by their access times
+  access_times = dict(sorted(access_times.items(), key=lambda x: x[1]))
+  min_time = min(access_times.values()) 
+  max_time = max(access_times.values()) 
+  for domain in access_times:
+    access_times[domain] = (access_times[domain] - min_time) / (max_time - min_time)
+
+  return access_times
 # For each domain name in the set, run a DNS query to get the IP.
-# We only take the first A record because some queries return
-# 10+ different IPs for load balancing/round robin purposes
-# which are all generally located in the same datacenter.
 def do_dns_query(hostnames: set):
-  res = {}
+  res = defaultdict(lambda: [])
 
   for host in hostnames:
     try:
-      res[host] = dns.resolver.resolve(host, 'A')[0].address
+      for rdata in dns.resolver.query(host, 'A'):
+        res[host].append(rdata.address)
     except Exception:
       print("error: got exception when making DNS request")
 
@@ -91,7 +95,6 @@ def get_geolocation(ip: str):
     print("Requests being throttled.")
     return None, None
 
-@lru_cache(maxsize = None)
 def get_my_ip():
   url = "https://checkip.amazonaws.com/"
   response = requests.get(url)
@@ -99,77 +102,57 @@ def get_my_ip():
   return response.text.strip()
 
 def map_ips_to_geolocation(hosts):
-  res = {}
+  res = defaultdict(lambda: [])
 
-  for domain, ip in tqdm(hosts.items()):
-    lat, long = get_geolocation(ip)
-    print(f"found {lat}, {long} for domain {domain}")
-    res[domain] = [lat, long]
-    sleep(1.3)
+  for domain, ips in tqdm(hosts.items()):
+    for ip in ips:
+      lat, long = get_geolocation(ip)
+      print(f"found {lat}, {long} for domain {domain}")
+      res[domain].append([lat, long])
+      sleep(1.3)
 
   print(res)
   return res
 
-def get_arc_width(response_sizes, current_domain):
-  max_bytes = max(response_sizes.values())
-  return 0.9 + (response_sizes[current_domain] / max_bytes) * 5
+def draw_map(geolocations: dict, access_times: dict):
+  access_order = order_access_times(access_times)
 
-def get_request_color(request_timings: "dict[str, datetime]", current_domain: str):
-  last_request_timestamp = max(request_timings.values())
-  first_request_timestamp = min(request_timings.values())
-  overall_delta = last_request_timestamp - first_request_timestamp
-
-  current_timestamp = request_timings[current_domain]
-  current_delta = current_timestamp - first_request_timestamp 
-
-  normalized = current_delta / overall_delta
-
-  g = 150 * normalized
-  a = 1 / (normalized + 0.01)
-
-  return f"rgba(255, {g}, 0, {a})"
-
-
-def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timings: "dict[str, datetime]"):
   my_lat, my_long = get_geolocation(get_my_ip())
 
   fig = go.Figure()
 
   for domain, latlong_array in geolocations.items():
-    lat, long = latlong_array
-    # Arc
-    fig.add_trace(
-      go.Scattergeo(
+    for lat, long in latlong_array:
+      # Arc
+      fig.add_trace(
+        go.Scattergeo(
+          locationmode = 'USA-states',
+          lon = [my_long, long],
+          lat = [my_lat, lat],
+          mode = 'lines',
+          line = dict(width = 1,color=f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})'),
+          opacity = 1,
+        )
+      )
+
+      
+      # Endpoint
+      fig.add_trace(go.Scattergeo(
         locationmode = 'USA-states',
-        lon = [my_long, long],
-        lat = [my_lat, lat],
-        mode = 'lines',
-        line = dict(
-          width = get_arc_width(response_sizes, domain),
-          color = get_request_color(request_timings, domain)
-        ),
-        opacity = 1,
-      )
-    )
-
-
-    # Endpoint
-    fig.add_trace(go.Scattergeo(
-      locationmode = 'USA-states',
-      lon = [long],
-      lat = [lat],
-      hoverinfo = 'text',
-      text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
-      mode = 'markers',
-      marker = dict(
-          size = 10,
-          color = get_request_color(request_timings, domain),
-          line = dict(
-              width = 3,
-              color = get_request_color(request_timings, domain)
-          )
-      )
-    ))
+        lon = [long],
+        lat = [lat],
+        hoverinfo = 'text',
+        text = f"Domain {access_order[domain]} {domain}",
+        mode = 'markers',
+        marker = dict(
+            size = 10,
+            color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})',
+            line = dict(
+                width = 3,
+                color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001)* 1.5})'
+            )
+        )
+      ))
 
 
   fig.update_layout(
@@ -207,14 +190,13 @@ def main():
   args = handle_cli_args()
   harfile = parse_har_file(args.filename)
   hostnames = get_hosts_from_harfile(harfile)
+  access_times = get_hosts_and_access_times(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
-  geolocations = map_ips_to_geolocation(hosts_with_addrs)
-
-  response_sizes = get_sizes_from_harfile(harfile)
-  request_timings = get_times_from_harfile(harfile)
+  #geolocations = map_ips_to_geolocation(hosts_with_addrs)
 
 
-  draw_map(geolocations, response_sizes, request_timings)
+
+  draw_map(get_test_data(), access_times)
 
   exit(0)
 
