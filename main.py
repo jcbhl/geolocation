@@ -1,6 +1,7 @@
 import argparse
 import plotly.graph_objects as go
 from functools import lru_cache
+from datetime import datetime
 import plotly.io as pio
 from time import sleep
 import requests
@@ -23,59 +24,52 @@ def parse_har_file(filename: str):
   
   return parsed
 
+def get_domain_from_entry(entry) -> str:
+  for header in entry['request']['headers']:
+    if header['name'] == "Host":
+      return header['value']
+
 def get_hosts_from_harfile(harfile) -> set:
   hosts = set()
   for entry in harfile['log']['entries']:
-    for header in entry['request']['headers']:
-      if header['name'] == "Host":
-        hosts.add(header['value'])
-        break
-   
-      
-    
-
-
+    domain_name = get_domain_from_entry(entry)
+    hosts.add(domain_name)
 
   return hosts
 
-def date_parser(date) -> int:
-  date = date.split(' ')[-2]
-  date = date.split(':')
-  minutes = int(date[0])*60.0 + int(date[1]) + int(date[2])/60.0
-  return minutes
- 
-def get_hosts_and_access_times(harfile) -> dict:
-  access_times = {}
-
-  domain = ""
-  time = ""
+def get_times_from_harfile(harfile) -> "dict[str, datetime]":
+  request_times = {}
   for entry in harfile['log']['entries']:
-    for header in entry['request']['headers']:
-      if header['name'] == "Host":
-        domain = header['value']
-        break
-    for header in entry['response']['headers']:
-      if header['name'] == "date":
-        time = header['value']
-        time = date_parser(time)
-        break
-    access_times[domain] = time
-  
-  # order the domains by their access times
-  access_times = dict(sorted(access_times.items(), key=lambda x: x[1]))
-  min_time = min(access_times.values()) 
-  max_time = max(access_times.values()) 
-  for domain in access_times:
-    access_times[domain] = (access_times[domain] - min_time) / (max_time - min_time)
+    domain_name = get_domain_from_entry(entry)
+    request_time = entry['startedDateTime']
+    parsed_request_time = datetime.strptime(request_time, "%Y-%m-%dT%H:%M:%S.%f%z")
 
-  return access_times
+    request_times[domain_name] = parsed_request_time
+  
+  return request_times
+
+def get_sizes_from_harfile(harfile) -> "dict[str, int]":
+  response_sizes = defaultdict(int)
+  for entry in harfile['log']['entries']:
+    domain_name = get_domain_from_entry(entry)
+    response_size = 0
+    try:
+      response_size = int(entry['response']['content']['size'])
+    except KeyError:
+      pass
+
+    response_sizes[domain_name] += response_size
+  
+  return response_sizes
+
+ 
 # For each domain name in the set, run a DNS query to get the IP.
 def do_dns_query(hostnames: set):
   res = defaultdict(lambda: [])
 
   for host in hostnames:
     try:
-      for rdata in dns.resolver.query(host, 'A'):
+      for rdata in dns.resolver.resolve(host, 'A'):
         res[host].append(rdata.address)
     except Exception:
       print("error: got exception when making DNS request")
@@ -95,6 +89,7 @@ def get_geolocation(ip: str):
     print("Requests being throttled.")
     return None, None
 
+@lru_cache(maxsize = None)
 def get_my_ip():
   url = "https://checkip.amazonaws.com/"
   response = requests.get(url)
@@ -114,9 +109,27 @@ def map_ips_to_geolocation(hosts):
   print(res)
   return res
 
-def draw_map(geolocations: dict, access_times: dict):
-  access_order = order_access_times(access_times)
+def get_arc_width(response_sizes, current_domain):
+  max_bytes = max(response_sizes.values())
+  return 0.9 + (response_sizes[current_domain] / max_bytes) * 5
 
+def get_request_color(request_timings: "dict[str, datetime]", current_domain: str):
+  last_request_timestamp = max(request_timings.values())
+  first_request_timestamp = min(request_timings.values())
+  overall_delta = last_request_timestamp - first_request_timestamp
+
+  current_timestamp = request_timings[current_domain]
+  current_delta = current_timestamp - first_request_timestamp 
+
+  normalized = current_delta / overall_delta
+
+  g = 150 * normalized
+  a = 1 / (normalized + 0.01)
+
+  return f"rgba(255, {g}, 0, {a})"
+
+
+def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timings: "dict[str, datetime]"):
   my_lat, my_long = get_geolocation(get_my_ip())
 
   fig = go.Figure()
@@ -130,7 +143,10 @@ def draw_map(geolocations: dict, access_times: dict):
           lon = [my_long, long],
           lat = [my_lat, lat],
           mode = 'lines',
-          line = dict(width = 1,color=f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})'),
+          line = dict(
+            width = get_arc_width(response_sizes, domain),
+            color = get_request_color(request_timings, domain)
+          ),
           opacity = 1,
         )
       )
@@ -142,14 +158,14 @@ def draw_map(geolocations: dict, access_times: dict):
         lon = [long],
         lat = [lat],
         hoverinfo = 'text',
-        text = f"Domain {access_order[domain]} {domain}",
+        text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
         mode = 'markers',
         marker = dict(
             size = 10,
-            color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001) * 1.5})',
+            color = get_request_color(request_timings, domain),
             line = dict(
                 width = 3,
-                color = f'rgba(255, {150 * access_times[domain]}, 0, {1/(access_times[domain]+0.001)* 1.5})'
+                color = get_request_color(request_timings, domain)
             )
         )
       ))
@@ -190,13 +206,14 @@ def main():
   args = handle_cli_args()
   harfile = parse_har_file(args.filename)
   hostnames = get_hosts_from_harfile(harfile)
-  access_times = get_hosts_and_access_times(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
-  #geolocations = map_ips_to_geolocation(hosts_with_addrs)
+  # geolocations = map_ips_to_geolocation(hosts_with_addrs)
+
+  response_sizes = get_sizes_from_harfile(harfile)
+  request_timings = get_times_from_harfile(harfile)
 
 
-
-  draw_map(get_test_data(), access_times)
+  draw_map(get_test_data(), response_sizes, request_timings)
 
   exit(0)
 
