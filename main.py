@@ -64,13 +64,17 @@ def get_sizes_from_harfile(harfile) -> "dict[str, int]":
 
  
 # For each domain name in the set, run a DNS query to get the IP.
+# We only take the first A record because some queries return
+# 10+ different IPs for load balancing/round robin purposes
+# which are all generally located in the same datacenter.
 def do_dns_query(hostnames: set):
   res = defaultdict(lambda: [])
 
   for host in hostnames:
     try:
-      for rdata in dns.resolver.resolve(host, 'A'):
-        res[host].append(rdata.address)
+      res[host].append(dns.resolver.resolve(host, 'A')[0].address)
+      # for rdata in dns.resolver.resolve(host, 'A'):
+      #   res[host].append(rdata.address)
     except Exception:
       print("error: got exception when making DNS request")
 
@@ -207,13 +211,13 @@ def main():
   harfile = parse_har_file(args.filename)
   hostnames = get_hosts_from_harfile(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
-  # geolocations = map_ips_to_geolocation(hosts_with_addrs)
+  geolocations = map_ips_to_geolocation(hosts_with_addrs)
 
   response_sizes = get_sizes_from_harfile(harfile)
   request_timings = get_times_from_harfile(harfile)
 
 
-  draw_map(get_test_data(), response_sizes, request_timings)
+  draw_map(geolocations, response_sizes, request_timings)
 
   exit(0)
 
