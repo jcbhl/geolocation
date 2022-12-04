@@ -68,13 +68,11 @@ def get_sizes_from_harfile(harfile) -> "dict[str, int]":
 # 10+ different IPs for load balancing/round robin purposes
 # which are all generally located in the same datacenter.
 def do_dns_query(hostnames: set):
-  res = defaultdict(lambda: [])
+  res = {}
 
   for host in hostnames:
     try:
-      res[host].append(dns.resolver.resolve(host, 'A')[0].address)
-      # for rdata in dns.resolver.resolve(host, 'A'):
-      #   res[host].append(rdata.address)
+      res[host] = dns.resolver.resolve(host, 'A')[0].address
     except Exception:
       print("error: got exception when making DNS request")
 
@@ -101,14 +99,13 @@ def get_my_ip():
   return response.text.strip()
 
 def map_ips_to_geolocation(hosts):
-  res = defaultdict(lambda: [])
+  res = {}
 
-  for domain, ips in tqdm(hosts.items()):
-    for ip in ips:
-      lat, long = get_geolocation(ip)
-      print(f"found {lat}, {long} for domain {domain}")
-      res[domain].append([lat, long])
-      sleep(1.3)
+  for domain, ip in tqdm(hosts.items()):
+    lat, long = get_geolocation(ip)
+    print(f"found {lat}, {long} for domain {domain}")
+    res[domain] = [lat, long]
+    sleep(1.3)
 
   print(res)
   return res
@@ -139,40 +136,40 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
   fig = go.Figure()
 
   for domain, latlong_array in geolocations.items():
-    for lat, long in latlong_array:
-      # Arc
-      fig.add_trace(
-        go.Scattergeo(
-          locationmode = 'USA-states',
-          lon = [my_long, long],
-          lat = [my_lat, lat],
-          mode = 'lines',
-          line = dict(
-            width = get_arc_width(response_sizes, domain),
-            color = get_request_color(request_timings, domain)
-          ),
-          opacity = 1,
-        )
-      )
-
-      
-      # Endpoint
-      fig.add_trace(go.Scattergeo(
+    lat, long = latlong_array
+    # Arc
+    fig.add_trace(
+      go.Scattergeo(
         locationmode = 'USA-states',
-        lon = [long],
-        lat = [lat],
-        hoverinfo = 'text',
-        text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
-        mode = 'markers',
-        marker = dict(
-            size = 10,
-            color = get_request_color(request_timings, domain),
-            line = dict(
-                width = 3,
-                color = get_request_color(request_timings, domain)
-            )
-        )
-      ))
+        lon = [my_long, long],
+        lat = [my_lat, lat],
+        mode = 'lines',
+        line = dict(
+          width = get_arc_width(response_sizes, domain),
+          color = get_request_color(request_timings, domain)
+        ),
+        opacity = 1,
+      )
+    )
+
+
+    # Endpoint
+    fig.add_trace(go.Scattergeo(
+      locationmode = 'USA-states',
+      lon = [long],
+      lat = [lat],
+      hoverinfo = 'text',
+      text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
+      mode = 'markers',
+      marker = dict(
+          size = 10,
+          color = get_request_color(request_timings, domain),
+          line = dict(
+              width = 3,
+              color = get_request_color(request_timings, domain)
+          )
+      )
+    ))
 
 
   fig.update_layout(
