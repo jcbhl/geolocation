@@ -1,9 +1,9 @@
 import argparse
+import db_handler
 import plotly.graph_objects as go
 from functools import lru_cache
 from datetime import datetime
 import plotly.io as pio
-from time import sleep
 import requests
 from collections import defaultdict
 from tqdm import tqdm
@@ -80,18 +80,6 @@ def do_dns_query(hostnames: set):
 
 
 @lru_cache(maxsize = None)
-def get_geolocation(ip: str):
-  url = f"https://ip-db.io/api/{ip}"
-  response = requests.get(url)
-  if response.status_code == 200:
-    parsed = response.json()
-    return parsed['latitude'], parsed['longitude']
-  
-  elif response.status_code == 429:
-    print("Requests being throttled.")
-    return None, None
-
-@lru_cache(maxsize = None)
 def get_my_ip():
   url = "https://checkip.amazonaws.com/"
   response = requests.get(url)
@@ -100,12 +88,11 @@ def get_my_ip():
 
 def map_ips_to_geolocation(hosts):
   res = {}
+  db_handler.init_db()
 
   for domain, ip in tqdm(hosts.items()):
-    lat, long = get_geolocation(ip)
-    print(f"found {lat}, {long} for domain {domain}")
+    lat, long = db_handler.get_geolocation(ip)
     res[domain] = [lat, long]
-    sleep(1.3)
 
   print(res)
   return res
@@ -131,7 +118,7 @@ def get_request_color(request_timings: "dict[str, datetime]", current_domain: st
 
 
 def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timings: "dict[str, datetime]"):
-  my_lat, my_long = get_geolocation(get_my_ip())
+  my_lat, my_long = db_handler.get_geolocation(get_my_ip())
 
   fig = go.Figure()
 
@@ -189,20 +176,6 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
 
   pass
 
-#Order access_times
-def order_access_times(access_times):
-  i = 1
-  z = 0 #normalize vaues from zero to ones by the access times
-  ord_access_times = {}
-  for domain in access_times:
-    if access_times[domain] == z:
-      ord_access_times[domain] = i # if it has the same acceess value, z will remain the same
-    else:
-      z = access_times[domain]
-      ord_access_times[domain] = i
-      i += 1
-  return ord_access_times
-
 def main():
   args = handle_cli_args()
   harfile = parse_har_file(args.filename)
@@ -218,55 +191,6 @@ def main():
 
   exit(0)
 
-
-
-def get_test_data():
-  return {
-    'pagead2.googlesyndication.com': [[37.405991, -122.078514], [37.405991, -122.078514]], 
-    'lightning.cnn.com': [[39.952339, -75.163788]], 
-    'sync.search.spotxchange.com': [[39.88282, -105.106476], [39.88282, -105.106476]], 
-    'events.brightline.tv': [[47.627499, -122.346199]], 
-    'pixel-us-east.rubiconproject.com': [[39.04372, -77.487488], [39.04372, -77.487488]], 
-    's.ntv.io': [[40.796768, -74.481537]], 
-    'steadfastseat.com': [[29.941401, -95.344498]], 
-    'aax-dtb-cf.amazon-adsystem.com': [[47.627499, -122.346199]], 
-    'eq97f.publishers.tremorhub.com': [[39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488]], 
-    'amplify.outbrain.com': [[40.796768, -74.481537]], 
-    'www.cnn.com': [[57.707161, 11.96679]], 
-    'mms.cnn.com': [[47.606209, -122.332069], [47.606209, -122.332069], [47.606209, -122.332069], [47.606209, -122.332069]], 
-    'bea4.v.fwmrm.net': [[47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199]], 
-    'cdn.cnn.com': [[39.952339, -75.163788]], 
-    'clips-media-aka.warnermediacdn.com': [[39.952339, -75.163788], [39.952339, -75.163788]], 
-    'z.cdp-dev.cnn.com': [[57.707161, 11.96679]], 
-    'atom.warnermedia.com': [[39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488]], 
-    'static.chartbeat.com': [[47.627499, -122.346199]], 
-    'live.rezync.com': [[47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199]], 
-    'fave.api.cnn.io': [[57.707161, 11.96679]], 
-    'a6709203f34992a5095d2bc7ceaf2ec504f651a8.cws.conviva.com': [[37.552921, -122.26992]], 
-    'licensing.bitmovin.com': [[39.099731, -94.578568]], 
-    'cdn.krxd.net': [[57.707161, 11.96679]], 
-    'www.i.cdn.cnn.com': [[57.707161, 11.96679]], 
-    'tag.bounceexchange.com': [[39.099731, -94.578568]], 
-    'get.s-onetag.com': [[47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199]], 
-    'd2uap9jskdzp2.cloudfront.net': [[47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199], [47.627499, -122.346199]],
-    'cdn.cookielaw.org': [[37.7757, -122.395203], [37.7757, -122.395203]], 
-    'ib.adnxs.com': [[40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955], [40.739288, -73.984955]], 
-    'www.summerhamster.com': [[39.04372, -77.487488], [39.04372, -77.487488]], 
-    'data.cnn.com': [[57.707161, 11.96679]], 
-    'ad.doubleclick.net': [[37.405991, -122.078514], [37.405991, -122.078514]], 
-    'static.ads-twitter.com': [[57.707161, 11.96679]], 
-    'c.amazon-adsystem.com': [[47.627499, -122.346199]], 
-    'w.usabilla.com': [[39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488]], 
-    'warnermediagroup-com.videoplayerhub.com': [[37.7757, -122.395203], [37.7757, -122.395203], [37.7757, -122.395203]], 
-    'as-sec.casalemedia.com': [[32.783058, -96.806671], [32.783058, -96.806671]], 
-    'services.brightline.tv': [[47.627499, -122.346199]], 
-    'medium.ngtv.io': [[39.952339, -75.163788]], 
-    'registry.api.cnn.io': [[57.707161, 11.96679]], 
-    'clips-manifests-aka.warnermediacdn.com': [[39.952339, -75.163788], [39.952339, -75.163788]], 
-    'www.ugdturner.com': [[39.04372, -77.487488], [39.04372, -77.487488], [39.04372, -77.487488]], 
-    'image8.pubmatic.com': [[39.04372, -77.487488]], 
-    'turnip.cdn.turner.com': [[39.952339, -75.163788], [39.952339, -75.163788]]
-  }
 
 if __name__ == "__main__":
   main()
