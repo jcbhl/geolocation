@@ -3,3 +3,7 @@
 - hit an IPDB to get the geolocation
 - once have geolocations, plot lat/longs on a map
 
+ASN path doesn't look to be a viable option, as an autonomous system doesn't correspond to a single datacenter like I thought
+
+TODO
+selenium generating harfile
