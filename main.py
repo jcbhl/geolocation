@@ -1,5 +1,9 @@
 import argparse
+import random
+from urllib.parse import urlparse
 import db_handler
+from playwright.sync_api import sync_playwright
+from playwright._impl._api_types import TimeoutError
 import plotly.graph_objects as go
 from functools import lru_cache
 from datetime import datetime
@@ -13,9 +17,9 @@ import json
 def handle_cli_args():
   parser = argparse.ArgumentParser(
                     prog = 'geolocator',
-                    description = 'Given a HAR file exported from a browser\'s network dev tools, produce a map that shows all of the requests that went out.',
+                    description = 'Given a domain name, produce a map that shows all of the requests that went out during the loading of that webpage.',
   )
-  parser.add_argument('filename')
+  parser.add_argument('domain_name')
   return parser.parse_args()
 
 def parse_har_file(filename: str):
@@ -25,9 +29,8 @@ def parse_har_file(filename: str):
   return parsed
 
 def get_domain_from_entry(entry) -> str:
-  for header in entry['request']['headers']:
-    if header['name'] == "Host":
-      return header['value']
+  domain = urlparse(entry['request']['url']).netloc
+  return domain
 
 def get_hosts_from_harfile(harfile) -> set:
   hosts = set()
@@ -55,6 +58,8 @@ def get_sizes_from_harfile(harfile) -> "dict[str, int]":
     response_size = 0
     try:
       response_size = int(entry['response']['content']['size'])
+
+      response_size = max(response_size, 0)
     except KeyError:
       pass
 
@@ -94,7 +99,6 @@ def map_ips_to_geolocation(hosts):
     lat, long = db_handler.get_geolocation(ip)
     res[domain] = [lat, long]
 
-  print(res)
   return res
 
 def get_arc_width(response_sizes, current_domain):
@@ -124,12 +128,20 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
 
   for domain, latlong_array in geolocations.items():
     lat, long = latlong_array
+
+    def get_noise() -> int:
+      range = 0.1
+      return random.uniform(-range, range)
+
+    long_noise = get_noise()
+    lat_noise = get_noise()
+
     # Arc
     fig.add_trace(
       go.Scattergeo(
         locationmode = 'USA-states',
-        lon = [my_long, long],
-        lat = [my_lat, lat],
+        lon = [my_long, long + long_noise],
+        lat = [my_lat, lat + lat_noise],
         mode = 'lines',
         line = dict(
           width = get_arc_width(response_sizes, domain),
@@ -143,8 +155,8 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
     # Endpoint
     fig.add_trace(go.Scattergeo(
       locationmode = 'USA-states',
-      lon = [long],
-      lat = [lat],
+      lon = [long + long_noise],
+      lat = [lat + lat_noise],
       hoverinfo = 'text',
       text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
       mode = 'markers',
@@ -176,9 +188,33 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
 
   pass
 
+def record_har(domain_name: str):
+  domain = urlparse(domain_name).netloc
+  filename = f"./data/{domain}.har"
+
+  with sync_playwright() as p:
+    print(f"Recording network traffic for {domain_name}...")
+    device = p.devices['Desktop Chrome']
+    browser = p.chromium.launch(headless=True,args=["--disable-gpu"])
+    context = browser.new_context(record_har_path=filename, **device)
+    page = context.new_page()
+    try:
+      page.goto(domain_name, wait_until='networkidle')
+    except TimeoutError:
+      pass
+
+    page.close()
+    context.close()
+
+    print("Recording traffic done.")
+  
+  return filename
+
+
 def main():
   args = handle_cli_args()
-  harfile = parse_har_file(args.filename)
+  filename = record_har(args.domain_name)
+  harfile = parse_har_file(filename)
   hostnames = get_hosts_from_harfile(harfile)
   hosts_with_addrs = do_dns_query(hostnames)
   geolocations = map_ips_to_geolocation(hosts_with_addrs)
