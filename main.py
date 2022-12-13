@@ -33,11 +33,13 @@ def parse_har_file(filename: str):
     return parsed
 
 
+# Compress a full URL down to just the domain name, for example, www.cnn.com
 def get_domain_from_entry(entry) -> str:
     domain = urlparse(entry["request"]["url"]).netloc
     return domain
 
 
+# Collect all of the domain names from a harfile.
 def get_hosts_from_harfile(harfile) -> set:
     hosts = set()
     for entry in harfile["log"]["entries"]:
@@ -47,6 +49,7 @@ def get_hosts_from_harfile(harfile) -> set:
     return hosts
 
 
+# Collect all of the request times from a harfile.
 def get_times_from_harfile(harfile) -> "dict[str, datetime]":
     request_times = {}
     for entry in harfile["log"]["entries"]:
@@ -59,6 +62,7 @@ def get_times_from_harfile(harfile) -> "dict[str, datetime]":
     return request_times
 
 
+# Accumulate the bytes transferred to each domain in the harfile.
 def get_sizes_from_harfile(harfile) -> "dict[str, int]":
     response_sizes = defaultdict(int)
     for entry in harfile["log"]["entries"]:
@@ -79,7 +83,7 @@ def get_sizes_from_harfile(harfile) -> "dict[str, int]":
 # For each domain name in the set, run a DNS query to get the IP.
 # We only take the first A record because some queries return
 # 10+ different IPs for load balancing/round robin purposes
-# which are all generally located in the same datacenter.
+# which are all generally located at the same geolocation.
 def do_dns_query(hostnames: set):
     res = {}
 
@@ -103,6 +107,7 @@ def get_my_ip():
     return response.text.strip()
 
 
+# Use the local geolocation database to map each IP to a geolocation
 def map_ips_to_geolocation(hosts):
     res = {}
     db_handler.init_db()
@@ -140,6 +145,7 @@ def get_request_color(request_timings: "dict[str, datetime]", current_domain: st
     return f"rgba(255, {g}, 0, {a})"
 
 
+# Produce the final visualization and save it to disk..
 def draw_map(
     geolocations: dict,
     response_sizes: "dict[str, int]",
@@ -215,6 +221,7 @@ def draw_map(
     print(f"Visualization saved to {filepath}.")
 
 
+# Use Playwright to grab a network capture from loading the domain.
 def record_har(domain_name: str):
     domain = urlparse(domain_name).netloc
     filename = f"./trace-{domain}.har"
