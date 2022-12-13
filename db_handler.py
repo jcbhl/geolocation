@@ -1,3 +1,5 @@
+# This site or product includes IP2Location LITE data available from https://lite.ip2location.com
+
 from functools import lru_cache
 import pandas as pd 
 import ipaddress

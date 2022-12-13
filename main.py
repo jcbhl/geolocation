@@ -19,7 +19,7 @@ def handle_cli_args():
                     prog = 'geolocator',
                     description = 'Given a domain name, produce a map that shows all of the requests that went out during the loading of that webpage.',
   )
-  parser.add_argument('domain_name')
+  parser.add_argument('domain_name', help='the domain to access, for example, https://www.cnn.com')
   return parser.parse_args()
 
 def parse_har_file(filename: str):
