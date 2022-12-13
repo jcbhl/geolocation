@@ -75,11 +75,14 @@ def get_sizes_from_harfile(harfile) -> "dict[str, int]":
 def do_dns_query(hostnames: set):
   res = {}
 
+  print(f"Doing DNS lookups for {len(hostnames)} domains...")
   for host in hostnames:
     try:
       res[host] = dns.resolver.resolve(host, 'A')[0].address
     except Exception:
-      print("error: got exception when making DNS request")
+      print("error: got exception when making DNS request. Continuing...")
+
+  print(f"DNS lookups done.")
 
   return res
 
@@ -95,9 +98,11 @@ def map_ips_to_geolocation(hosts):
   res = {}
   db_handler.init_db()
 
+  print("Mapping IPs to geolocations...")
   for domain, ip in tqdm(hosts.items()):
     lat, long = db_handler.get_geolocation(ip)
     res[domain] = [lat, long]
+  print("Done mapping IPs to geolocations.")
 
   return res
 
@@ -106,6 +111,9 @@ def get_arc_width(response_sizes, current_domain):
   return 0.9 + (response_sizes[current_domain] / max_bytes) * 5
 
 def get_request_color(request_timings: "dict[str, datetime]", current_domain: str):
+  if len(request_timings) == 1:
+    return 'rgba(255, 0, 0, 1)'
+
   last_request_timestamp = max(request_timings.values())
   first_request_timestamp = min(request_timings.values())
   overall_delta = last_request_timestamp - first_request_timestamp
@@ -133,15 +141,17 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
       range = 0.1
       return random.uniform(-range, range)
 
-    long_noise = get_noise()
-    lat_noise = get_noise()
+    # To avoid many points being stacked up in the same lat/long, add some noise
+    # so that we can see each request.
+    end_host_long = long + get_noise()
+    end_host_lat = lat + get_noise()
 
     # Arc
     fig.add_trace(
       go.Scattergeo(
         locationmode = 'USA-states',
-        lon = [my_long, long + long_noise],
-        lat = [my_lat, lat + lat_noise],
+        lon = [my_long, end_host_long],
+        lat = [my_lat, end_host_lat],
         mode = 'lines',
         line = dict(
           width = get_arc_width(response_sizes, domain),
@@ -155,8 +165,8 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
     # Endpoint
     fig.add_trace(go.Scattergeo(
       locationmode = 'USA-states',
-      lon = [long + long_noise],
-      lat = [lat + lat_noise],
+      lon = [end_host_long],
+      lat = [end_host_lat],
       hoverinfo = 'text',
       text = f"Domain {domain} transferred {response_sizes[domain]} bytes",
       mode = 'markers',
@@ -171,8 +181,9 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
     ))
 
 
+  domain = urlparse(domain_name).netloc
   fig.update_layout(
-    title_text = 'Request Geolocations',
+    title_text = f"Request Geolocations for {domain}",
     showlegend = False,
     geo = dict(
         showland = True,
@@ -182,13 +193,14 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
   )
   fig.update_geos(projection_type="orthographic", showcountries=True, countrycolor="Black")
 
-  domain = urlparse(domain_name).netloc
-  pio.write_html(fig, f"./geolocations-{domain}.html")
+  filepath = f"./geolocations-{domain}.html"
+  pio.write_html(fig, filepath)
+  print(f"Visualization saved to {filepath}.")
 
 
 def record_har(domain_name: str):
   domain = urlparse(domain_name).netloc
-  filename = f"./data/{domain}.har"
+  filename = f"./trace-{domain}.har"
 
   with sync_playwright() as p:
     print(f"Recording network traffic for {domain_name}...")
@@ -219,7 +231,6 @@ def main():
 
   response_sizes = get_sizes_from_harfile(harfile)
   request_timings = get_times_from_harfile(harfile)
-
 
   draw_map(geolocations, response_sizes, request_timings, args.domain_name)
 
