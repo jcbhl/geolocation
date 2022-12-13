@@ -121,7 +121,7 @@ def get_request_color(request_timings: "dict[str, datetime]", current_domain: st
   return f"rgba(255, {g}, 0, {a})"
 
 
-def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timings: "dict[str, datetime]"):
+def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timings: "dict[str, datetime]", domain_name: str):
   my_lat, my_long = db_handler.get_geolocation(get_my_ip())
 
   fig = go.Figure()
@@ -182,11 +182,9 @@ def draw_map(geolocations: dict, response_sizes: "dict[str, int]", request_timin
   )
   fig.update_geos(projection_type="orthographic", showcountries=True, countrycolor="Black")
 
+  domain = urlparse(domain_name).netloc
+  pio.write_html(fig, f"./geolocations-{domain}.html")
 
-  pio.write_html(fig, './images/test2.html')
-  # pio.write_image(fig, './images/test.png', format='png', scale=6, width=1080, height=1080)
-
-  pass
 
 def record_har(domain_name: str):
   domain = urlparse(domain_name).netloc
@@ -223,7 +221,7 @@ def main():
   request_timings = get_times_from_harfile(harfile)
 
 
-  draw_map(geolocations, response_sizes, request_timings)
+  draw_map(geolocations, response_sizes, request_timings, args.domain_name)
 
   exit(0)
 
